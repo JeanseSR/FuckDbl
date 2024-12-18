@@ -19,6 +19,7 @@ def calculate_hash(file_path, hash_algorithm="md5"):
 
 def find_duplicates_with_progress(directory, progress_bar, hash_algorithm="md5"):
     """Parcourt un répertoire et identifie les doublons avec une barre de progression."""
+    global stop_analysis
     hashes = defaultdict(list)
     all_files = []
 
@@ -32,6 +33,9 @@ def find_duplicates_with_progress(directory, progress_bar, hash_algorithm="md5")
     progress_bar["value"] = 0
 
     for index, file_path in enumerate(all_files):
+        if stop_analysis:  # Vérification pour arrêter
+            break
+
         file_hash = calculate_hash(file_path, hash_algorithm)
         if file_hash:
             hashes[file_hash].append(file_path)
@@ -52,6 +56,9 @@ def select_directory():
 
 def analyze():
     """Lance l'analyse des doublons."""
+    global stop_analysis
+    stop_analysis = False
+
     folder = entry_directory.get()
     if not os.path.isdir(folder):
         messagebox.showerror("Erreur", "Veuillez sélectionner un répertoire valide.")
@@ -64,6 +71,10 @@ def analyze():
     progress_bar.pack(fill="x", padx=10, pady=10)  # Afficher la barre
     duplicates = find_duplicates_with_progress(folder, progress_bar)
     progress_bar.pack_forget()  # Masquer la barre après analyse
+
+    if stop_analysis:
+        messagebox.showinfo("Interruption", "Analyse interrompue.")
+        return
 
     if not duplicates:
         messagebox.showinfo("Résultat", "Aucun doublon trouvé.")
@@ -94,6 +105,12 @@ def analyze():
             chk = tk.Checkbutton(scrollable_frame, text=path, variable=var, wraplength=500)
             chk.pack(anchor="w")
             selected_files[path] = var
+
+
+def stop_analysis_command():
+    """Interrompt l'analyse en cours."""
+    global stop_analysis
+    stop_analysis = True
 
 
 def delete_selected():
@@ -142,6 +159,9 @@ frame_actions.pack(fill="x", padx=10, pady=5)
 btn_analyze = tk.Button(frame_actions, text="Analyser", command=analyze)
 btn_analyze.pack(side="left", padx=5)
 
+btn_stop = tk.Button(frame_actions, text="Arrêter", command=stop_analysis_command)
+btn_stop.pack(side="left", padx=5)
+
 btn_delete = tk.Button(frame_actions, text="Supprimer les doublons", command=delete_selected)
 btn_delete.pack(side="left", padx=5)
 
@@ -150,5 +170,6 @@ frame_results = tk.Frame(root)
 frame_results.pack(fill="both", expand=True, padx=10, pady=5)
 
 selected_files = {}
+stop_analysis = False  # Variable globale pour indiquer l'arrêt de l'analyse
 
 root.mainloop()
