@@ -4,7 +4,7 @@ from collections import defaultdict
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-
+# Fonction pour calculer le hash d'un fichier
 def calculate_hash(file_path, hash_algorithm="md5"):
     """Calcule le hash d'un fichier."""
     hash_func = hashlib.new(hash_algorithm)
@@ -16,7 +16,7 @@ def calculate_hash(file_path, hash_algorithm="md5"):
         return None
     return hash_func.hexdigest()
 
-
+# Fonction pour trouver les doublons avec barre de progression
 def find_duplicates_with_progress(directory, progress_bar, hash_algorithm="md5"):
     """Parcourt un répertoire et identifie les doublons avec une barre de progression."""
     global stop_analysis
@@ -45,7 +45,7 @@ def find_duplicates_with_progress(directory, progress_bar, hash_algorithm="md5")
     duplicates = {h: paths for h, paths in hashes.items() if len(paths) > 1}
     return duplicates
 
-
+# Fonction pour sélectionner un répertoire
 def select_directory():
     """Ouvre une boîte de dialogue pour sélectionner un répertoire."""
     folder = filedialog.askdirectory()
@@ -53,7 +53,7 @@ def select_directory():
         entry_directory.delete(0, tk.END)
         entry_directory.insert(0, folder)
 
-
+# Fonction pour lancer l'analyse
 def analyze():
     """Lance l'analyse des doublons."""
     global stop_analysis
@@ -81,6 +81,7 @@ def analyze():
         return
 
     # Création d'une zone défilable pour les résultats
+    global canvas
     canvas = tk.Canvas(frame_results)
     scrollbar = ttk.Scrollbar(frame_results, orient="vertical", command=canvas.yview)
     scrollable_frame = tk.Frame(canvas)
@@ -93,6 +94,8 @@ def analyze():
     canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
     canvas.configure(yscrollcommand=scrollbar.set)
 
+    # Lier la molette de la souris
+    canvas.bind_all("<MouseWheel>", on_mouse_wheel)  # Windows/macOS
     canvas.pack(side="left", fill="both", expand=True)
     scrollbar.pack(side="right", fill="y")
 
@@ -106,13 +109,17 @@ def analyze():
             chk.pack(anchor="w")
             selected_files[path] = var
 
+# Fonction pour gérer le défilement avec la molette
+def on_mouse_wheel(event):
+    canvas.yview_scroll(-1 * int(event.delta / 120), "units")
 
+# Fonction pour arrêter l'analyse en cours
 def stop_analysis_command():
     """Interrompt l'analyse en cours."""
     global stop_analysis
     stop_analysis = True
 
-
+# Fonction pour supprimer les fichiers sélectionnés
 def delete_selected():
     """Supprime les fichiers sélectionnés."""
     to_delete = [path for path, var in selected_files.items() if var.get()]
@@ -129,22 +136,22 @@ def delete_selected():
     messagebox.showinfo("Succès", "Les fichiers sélectionnés ont été supprimés.")
     analyze()
 
-
 # Interface graphique avec Tkinter
 root = tk.Tk()
 root.title("Détecteur de Doublons")
+root.configure(bg="#f0f4f7")
 
 # Répertoire
-frame_directory = tk.Frame(root)
-frame_directory.pack(fill="x", padx=10, pady=5)
+frame_directory = ttk.LabelFrame(root, text="Sélection du répertoire")
+frame_directory.pack(fill="x", padx=10, pady=10)
 
-label_directory = tk.Label(frame_directory, text="Répertoire :")
+label_directory = ttk.Label(frame_directory, text="Répertoire :")
 label_directory.pack(side="left")
 
-entry_directory = tk.Entry(frame_directory, width=50)
+entry_directory = ttk.Entry(frame_directory, width=50)
 entry_directory.pack(side="left", padx=5)
 
-btn_browse = tk.Button(frame_directory, text="Parcourir", command=select_directory)
+btn_browse = ttk.Button(frame_directory, text="Parcourir", command=select_directory)
 btn_browse.pack(side="left")
 
 # Barre de progression
@@ -153,8 +160,8 @@ progress_bar.pack(fill="x", padx=10, pady=10)
 progress_bar.pack_forget()  # Masquer au démarrage
 
 # Boutons d'action
-frame_actions = tk.Frame(root)
-frame_actions.pack(fill="x", padx=10, pady=5)
+frame_actions = ttk.LabelFrame(root, text="Actions")
+frame_actions.pack(fill="x", padx=10, pady=10)
 
 btn_analyze = tk.Button(frame_actions, text="Analyser", command=analyze)
 btn_analyze.pack(side="left", padx=5)
@@ -166,8 +173,8 @@ btn_delete = tk.Button(frame_actions, text="Supprimer les doublons", command=del
 btn_delete.pack(side="left", padx=5)
 
 # Résultats
-frame_results = tk.Frame(root)
-frame_results.pack(fill="both", expand=True, padx=10, pady=5)
+frame_results = ttk.LabelFrame(root, text="Résultats")
+frame_results.pack(fill="both", expand=True, padx=10, pady=10)
 
 selected_files = {}
 stop_analysis = False  # Variable globale pour indiquer l'arrêt de l'analyse
