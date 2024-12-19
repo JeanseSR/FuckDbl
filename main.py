@@ -1,12 +1,18 @@
 import os
-import hashlib
-from collections import defaultdict
+import csv
+from datetime import datetime
+import shutil
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import ttk, filedialog, messagebox
+from collections import defaultdict  
+
+
+LOG_FILE = "deleted_files_log.csv"
 
 
 def calculate_hash(file_path, hash_algorithm="md5"):
     """Calcule le hash d'un fichier."""
+    import hashlib
     hash_func = hashlib.new(hash_algorithm)
     try:
         with open(file_path, "rb") as f:
@@ -17,19 +23,17 @@ def calculate_hash(file_path, hash_algorithm="md5"):
     return hash_func.hexdigest()
 
 
-def find_duplicates_with_progress(directory, progress_bar, hash_algorithm="md5", file_types=None):
-    """Parcourt un répertoire et identifie les doublons avec une barre de progression et un filtre de type de fichier."""
+def find_duplicates_with_progress(directory, file_types, progress_bar, hash_algorithm="md5"):
+    """Parcourt un répertoire et identifie les doublons avec une barre de progression."""
     global stop_analysis
     hashes = defaultdict(list)
     all_files = []
 
-    # Collecter tous les fichiers pour calculer la progression
+    # Collecter tous les fichiers correspondant aux extensions choisies
     for root, _, files in os.walk(directory):
         for file in files:
-            if file_types:  # Filtrer par types de fichiers
-                if not any(file.lower().endswith(ext.lower()) for ext in file_types):
-                    continue
-            all_files.append(os.path.join(root, file))
+            if not file_types or any(file.endswith(ft) for ft in file_types):
+                all_files.append(os.path.join(root, file))
 
     total_files = len(all_files)
     progress_bar["maximum"] = total_files
@@ -49,12 +53,66 @@ def find_duplicates_with_progress(directory, progress_bar, hash_algorithm="md5",
     return duplicates
 
 
-def select_directory():
-    """Ouvre une boîte de dialogue pour sélectionner un répertoire."""
-    folder = filedialog.askdirectory()
-    if folder:
-        entry_directory.delete(0, tk.END)
-        entry_directory.insert(0, folder)
+def log_file_deletion(file_path, trash_directory="DeletedItems"):
+    """Journalise les informations sur le fichier supprimé."""
+    os.makedirs(trash_directory, exist_ok=True)
+    trashed_file = os.path.join(trash_directory, os.path.basename(file_path))
+    shutil.move(file_path, trashed_file)
+
+    # Écrire dans le journal
+    with open(LOG_FILE, "a", newline="", encoding="utf-8") as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow([file_path, trashed_file, datetime.now()])
+
+
+def export_report(duplicates):
+    """Exporte le rapport des doublons détectés dans un fichier CSV."""
+    if not duplicates:
+        messagebox.showinfo("Info", "Aucun doublon à exporter.")
+        return
+
+    file_path = filedialog.asksaveasfilename(
+        defaultextension=".csv",
+        filetypes=[("Fichier CSV", "*.csv")],
+        title="Enregistrer le rapport"
+    )
+    if not file_path:
+        return
+
+    try:
+        with open(file_path, "w", newline="", encoding="utf-8") as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(["Hash", "Fichiers"])
+            for hash_value, paths in duplicates.items():
+                writer.writerow([hash_value, ", ".join(paths)])
+        messagebox.showinfo("Succès", "Rapport exporté avec succès.")
+    except Exception as e:
+        messagebox.showerror("Erreur", f"Impossible d'exporter le rapport : {e}")
+
+
+def delete_selected():
+    """Supprime les fichiers sélectionnés."""
+    to_delete = [path for path, var in selected_files.items() if var.get()]
+    if not to_delete:
+        messagebox.showinfo("Info", "Aucun fichier sélectionné pour suppression.")
+        return
+
+    if temp_delete_var.get():  # Suppression temporaire
+        for file_path in to_delete:
+            try:
+                log_file_deletion(file_path)
+            except Exception as e:
+                print(f"Erreur lors de la suppression temporaire de {file_path} : {e}")
+        messagebox.showinfo("Succès", "Les fichiers sélectionnés ont été déplacés temporairement.")
+    else:  # Suppression définitive
+        for file_path in to_delete:
+            try:
+                os.remove(file_path)
+            except Exception as e:
+                print(f"Erreur lors de la suppression définitive de {file_path} : {e}")
+        messagebox.showinfo("Succès", "Les fichiers sélectionnés ont été supprimés définitivement.")
+
+    analyze()  # Met à jour la liste après suppression
 
 
 def analyze():
@@ -67,16 +125,13 @@ def analyze():
         messagebox.showerror("Erreur", "Veuillez sélectionner un répertoire valide.")
         return
 
-    selected_file_types = entry_file_types.get().strip().split(",")
-    selected_file_types = [ft.strip() for ft in selected_file_types if ft.strip()]  # Nettoyer les entrées
-
-    # Réinitialiser l'affichage des résultats et de la barre de progression
+    file_types = [ft.strip() for ft in entry_file_types.get().split(",") if ft.strip()]
     for widget in frame_results.winfo_children():
         widget.destroy()
 
-    progress_bar.pack(fill="x", padx=10, pady=10)  # Afficher la barre
-    duplicates = find_duplicates_with_progress(folder, progress_bar, file_types=selected_file_types)
-    progress_bar.pack_forget()  # Masquer la barre après analyse
+    progress_bar.pack(fill="x", padx=10, pady=10)
+    duplicates = find_duplicates_with_progress(folder, file_types, progress_bar)
+    progress_bar.pack_forget()
 
     if stop_analysis:
         messagebox.showinfo("Interruption", "Analyse interrompue.")
@@ -86,12 +141,9 @@ def analyze():
         messagebox.showinfo("Résultat", "Aucun doublon trouvé.")
         return
 
-    # Création d'une zone défilable pour les résultats
     canvas = tk.Canvas(frame_results)
     scrollbar = ttk.Scrollbar(frame_results, orient="vertical", command=canvas.yview)
     scrollable_frame = tk.Frame(canvas)
-
-    # Configurer la zone défilable
     scrollable_frame.bind(
         "<Configure>",
         lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
@@ -99,12 +151,13 @@ def analyze():
     canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
     canvas.configure(yscrollcommand=scrollbar.set)
 
-    # Lier la molette de la souris
-    canvas.bind_all("<MouseWheel>", on_mouse_wheel)  # Windows/macOS
+    def on_mouse_wheel(event):
+        canvas.yview_scroll(-1 * int(event.delta / 120), "units")
+
+    canvas.bind_all("<MouseWheel>", on_mouse_wheel)
     canvas.pack(side="left", fill="both", expand=True)
     scrollbar.pack(side="right", fill="y")
 
-    # Affichage des doublons
     for hash_value, paths in duplicates.items():
         label_hash = tk.Label(scrollable_frame, text=f"Hash : {hash_value}", font=("Arial", 10, "bold"))
         label_hash.pack(anchor="w")
@@ -115,8 +168,12 @@ def analyze():
             selected_files[path] = var
 
 
-def on_mouse_wheel(event):
-    canvas.yview_scroll(-1 * int(event.delta / 120), "units")
+def select_directory():
+    """Ouvre une boîte de dialogue pour sélectionner un répertoire."""
+    folder = filedialog.askdirectory()
+    if folder:
+        entry_directory.delete(0, tk.END)
+        entry_directory.insert(0, folder)
 
 
 def stop_analysis_command():
@@ -125,29 +182,10 @@ def stop_analysis_command():
     stop_analysis = True
 
 
-def delete_selected():
-    """Supprime les fichiers sélectionnés."""
-    to_delete = [path for path, var in selected_files.items() if var.get()]
-    if not to_delete:
-        messagebox.showinfo("Info", "Aucun fichier sélectionné pour suppression.")
-        return
-
-    for file_path in to_delete:
-        try:
-            os.remove(file_path)
-        except Exception as e:
-            print(f"Erreur lors de la suppression de {file_path} : {e}")
-
-    messagebox.showinfo("Succès", "Les fichiers sélectionnés ont été supprimés.")
-    analyze()
-
-
-# Interface graphique avec Tkinter
 root = tk.Tk()
 root.title("Détecteur de Doublons")
 root.configure(bg="#f0f4f7")
 
-# Répertoire
 frame_directory = ttk.LabelFrame(root, text="Sélection du répertoire")
 frame_directory.pack(fill="x", padx=10, pady=10)
 
@@ -160,20 +198,26 @@ entry_directory.pack(side="left", padx=5)
 btn_browse = ttk.Button(frame_directory, text="Parcourir", command=select_directory)
 btn_browse.pack(side="left")
 
-# Sélection des types de fichiers
 frame_file_types = ttk.LabelFrame(root, text="Types de fichiers (séparés par des virgules, ex: .jpg, .png)")
 frame_file_types.pack(fill="x", padx=10, pady=10)
 
 entry_file_types = ttk.Entry(frame_file_types, width=50)
-entry_file_types.insert(0, ".jpg, .png, .mp4")  # Exemple de valeur par défaut
-entry_file_types.pack(side="left", padx=5)
+entry_file_types.pack(padx=5, pady=5)
 
-# Barre de progression
+frame_options = ttk.LabelFrame(root, text="Options de suppression")
+frame_options.pack(fill="x", padx=10, pady=10)
+
+temp_delete_var = tk.BooleanVar(value=True)
+radio_temp = tk.Radiobutton(frame_options, text="Suppression temporaire (restaurable)", variable=temp_delete_var, value=True)
+radio_temp.pack(anchor="w", padx=5, pady=2)
+
+radio_permanent = tk.Radiobutton(frame_options, text="Suppression définitive (irréversible)", variable=temp_delete_var, value=False)
+radio_permanent.pack(anchor="w", padx=5, pady=2)
+
 progress_bar = ttk.Progressbar(root, orient="horizontal", mode="determinate")
 progress_bar.pack(fill="x", padx=10, pady=10)
-progress_bar.pack_forget()  # Masquer au démarrage
+progress_bar.pack_forget()
 
-# Boutons d'action
 frame_actions = ttk.LabelFrame(root, text="Actions")
 frame_actions.pack(fill="x", padx=10, pady=10)
 
@@ -186,11 +230,13 @@ btn_stop.pack(side="left", padx=5)
 btn_delete = tk.Button(frame_actions, text="Supprimer les doublons", command=delete_selected)
 btn_delete.pack(side="left", padx=5)
 
-# Résultats
+btn_export = tk.Button(frame_actions, text="Exporter rapport", command=lambda: export_report(selected_files))
+btn_export.pack(side="left", padx=5)
+
 frame_results = ttk.LabelFrame(root, text="Résultats")
 frame_results.pack(fill="both", expand=True, padx=10, pady=10)
 
 selected_files = {}
-stop_analysis = False  # Variable globale pour indiquer l'arrêt de l'analyse
+stop_analysis = False
 
 root.mainloop()
