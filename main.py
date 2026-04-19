@@ -28,6 +28,39 @@ def calculate_hash(file_path, hash_algorithm="md5"):
         return None
     return hash_func.hexdigest()
 
+def get_file_date(file_path, date_type="modified"):
+    """Retourne la date de création ou de modification d'un fichier."""
+    try:
+        if date_type == "created":
+            timestamp = os.path.getctime(file_path)  # création (Windows) ou changement metadata (Unix)
+        else:
+            timestamp = os.path.getmtime(file_path)  # dernière modification
+        return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return "N/A"
+
+def log_deletion(file_path, deletion_type, precomputed_hash=None, hash_algorithm="md5"):
+    """Enregistre la suppression d'un fichier avec ses dates."""
+    log_file = "deletion_log.csv"
+    
+    # Utiliser le hash pré-calculé si fourni, sinon essayer de le calculer
+    if precomputed_hash:
+        file_hash = precomputed_hash
+    else:
+        file_hash = calculate_hash(file_path, hash_algorithm)
+        if file_hash is None:
+            file_hash = "N/A (fichier inexistant)"
+    
+    date_created = get_file_date(file_path, "created")
+    date_modified = get_file_date(file_path, "modified")
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    file_exists = os.path.isfile(log_file)
+    with open(log_file, "a", newline="", encoding="utf-8-sig") as csvfile:
+        writer = csv.writer(csvfile, delimiter=';', quoting=csv.QUOTE_ALL)
+        if not file_exists:
+            writer.writerow(["Date_suppression", "Date_creation_fichier", "Date_modification_fichier", "Chemin_fichier", "Hash", "Type_suppression"])
+        writer.writerow([now, date_created, date_modified, file_path, file_hash, deletion_type])
 
 def find_duplicates_with_progress(directory, file_types, progress_bar, hash_algorithm="md5"):
     """Parcourt un répertoire et identifie les doublons avec une barre de progression."""
@@ -78,7 +111,7 @@ def send_to_trash(file_path):
         print(f"Erreur lors de l'envoi à la corbeille : {e}")
         
 def export_report(duplicates):
-    """Exporte le rapport des doublons détectés dans un fichier CSV."""
+    """Exporte le rapport des doublons détectés avec la date de chaque fichier."""
     if not duplicates:
         messagebox.showinfo("Info", "Aucun doublon à exporter.")
         return
@@ -92,18 +125,23 @@ def export_report(duplicates):
         return
 
     try:
-        with open(file_path, "w", newline="", encoding="utf-8") as csvfile:
-            writer = csv.writer(csvfile)
-            writer.writerow(["Hash", "Fichiers"])
+        with open(file_path, "w", newline="", encoding="utf-8-sig") as csvfile:
+            writer = csv.writer(csvfile, delimiter=';', quoting=csv.QUOTE_ALL)
+            # En-tête enrichi
+            writer.writerow(["Date_creation_fichier", "Date_modification_fichier", "Chemin_fichier", "Hash", "Statut"])
+            
             for hash_value, paths in duplicates.items():
-                writer.writerow([hash_value, ", ".join(paths)])
-        messagebox.showinfo("Succès", "Rapport exporté avec succès.")
+                for path in paths:
+                    date_created = get_file_date(path, "created")
+                    date_modified = get_file_date(path, "modified")
+                    writer.writerow([date_created, date_modified, path, hash_value, "Doublon détecté"])
+        messagebox.showinfo("Succès", f"Rapport exporté avec succès.")
     except Exception as e:
         messagebox.showerror("Erreur", f"Impossible d'exporter le rapport : {e}")
 
 
 def delete_selected():
-    """Supprime les fichiers sélectionnés."""
+    """Supprime les fichiers sélectionnés et journalise l'opération."""
     to_delete = [path for path, var in selected_files.items() if var.get()]
     if not to_delete:
         messagebox.showinfo("Info", "Aucun fichier sélectionné pour suppression.")
@@ -112,25 +150,43 @@ def delete_selected():
     if temp_delete_var.get():  # Suppression temporaire
         for file_path in to_delete:
             try:
-                send_to_trash(normalize_path(file_path))
+                # Calculer le hash AVANT suppression
+                file_hash = calculate_hash(file_path)
+                if file_hash is None:
+                    file_hash = "N/A (calcul impossible)"
+                
+                normalized = normalize_path(file_path)
+                send2trash(normalized)
+                
+                # Journaliser avec le hash pré-calculé
+                log_deletion(file_path, "Temporaire (corbeille)", precomputed_hash=file_hash)
             except Exception as e:
-                print(f"Erreur lors de la suppression temporaire de {file_path} : {e}")
-        messagebox.showinfo("Succès", "Les fichiers sélectionnés ont été déplacés temporairement.")
+                print(f"Erreur corbeille : {e}")
+                log_deletion(file_path, f"Temporaire - ÉCHEC : {e}", precomputed_hash="N/A (erreur)")
+        messagebox.showinfo("Succès", "Les fichiers sélectionnés ont été déplacés dans la corbeille.")
     else:  # Suppression définitive
         for file_path in to_delete:
             try:
+                # Calculer le hash AVANT suppression
+                file_hash = calculate_hash(file_path)
+                if file_hash is None:
+                    file_hash = "N/A (calcul impossible)"
+                
                 os.remove(normalize_path(file_path))
+                
+                # Journaliser avec le hash pré-calculé
+                log_deletion(file_path, "Définitive", precomputed_hash=file_hash)
             except Exception as e:
-                print(f"Erreur lors de la suppression définitive de {file_path} : {e}")
+                print(f"Erreur suppression définitive : {e}")
+                log_deletion(file_path, f"Définitive - ÉCHEC : {e}", precomputed_hash="N/A (erreur)")
         messagebox.showinfo("Succès", "Les fichiers sélectionnés ont été supprimés définitivement.")
 
     # Nettoyer avant de relancer l'analyse
-    
     selected_files.clear()
     for widget in frame_results.winfo_children():
         widget.destroy()
-
-    analyze()  # Met à jour la liste après suppression
+    
+    analyze()
 
 
 def analyze():
@@ -233,6 +289,12 @@ radio_temp.pack(anchor="w", padx=5, pady=2)
 
 radio_permanent = tk.Radiobutton(frame_options, text="Suppression définitive (irréversible)", variable=temp_delete_var, value=False)
 radio_permanent.pack(anchor="w", padx=5, pady=2)
+
+# Afficher l'algorithme de hash utilisé
+hash_info_frame = ttk.LabelFrame(root, text="Informations technique")
+hash_info_frame.pack(fill="x", padx=10, pady=5)
+hash_label = ttk.Label(hash_info_frame, text="Algorithme de hash utilisé : MD5 (par défaut)")
+hash_label.pack(padx=5, pady=5)
 
 progress_bar = ttk.Progressbar(root, orient="horizontal", mode="determinate")
 progress_bar.pack(fill="x", padx=10, pady=10)
