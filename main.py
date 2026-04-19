@@ -3,11 +3,17 @@ import csv
 from datetime import datetime
 import shutil
 import tkinter as tk
+from send2trash import send2trash
 from tkinter import ttk, filedialog, messagebox
 from collections import defaultdict  
 
-
+current_duplicates = {}
 LOG_FILE = "deleted_files_log.csv"
+
+
+def normalize_path(path):
+    """Convertit un chemin en format Windows standard."""
+    return os.path.normpath(os.path.abspath(path))
 
 
 def calculate_hash(file_path, hash_algorithm="md5"):
@@ -64,7 +70,13 @@ def log_file_deletion(file_path, trash_directory="DeletedItems"):
         writer = csv.writer(csvfile)
         writer.writerow([file_path, trashed_file, datetime.now()])
 
-
+def send_to_trash(file_path):
+    """Envoie le fichier dans la corbeille système."""
+    try:
+        send2trash(file_path)
+    except Exception as e:
+        print(f"Erreur lors de l'envoi à la corbeille : {e}")
+        
 def export_report(duplicates):
     """Exporte le rapport des doublons détectés dans un fichier CSV."""
     if not duplicates:
@@ -100,17 +112,23 @@ def delete_selected():
     if temp_delete_var.get():  # Suppression temporaire
         for file_path in to_delete:
             try:
-                log_file_deletion(file_path)
+                send_to_trash(normalize_path(file_path))
             except Exception as e:
                 print(f"Erreur lors de la suppression temporaire de {file_path} : {e}")
         messagebox.showinfo("Succès", "Les fichiers sélectionnés ont été déplacés temporairement.")
     else:  # Suppression définitive
         for file_path in to_delete:
             try:
-                os.remove(file_path)
+                os.remove(normalize_path(file_path))
             except Exception as e:
                 print(f"Erreur lors de la suppression définitive de {file_path} : {e}")
         messagebox.showinfo("Succès", "Les fichiers sélectionnés ont été supprimés définitivement.")
+
+    # Nettoyer avant de relancer l'analyse
+    
+    selected_files.clear()
+    for widget in frame_results.winfo_children():
+        widget.destroy()
 
     analyze()  # Met à jour la liste après suppression
 
@@ -131,6 +149,8 @@ def analyze():
 
     progress_bar.pack(fill="x", padx=10, pady=10)
     duplicates = find_duplicates_with_progress(folder, file_types, progress_bar)
+    global current_duplicates
+    current_duplicates = duplicates
     progress_bar.pack_forget()
 
     if stop_analysis:
@@ -230,7 +250,7 @@ btn_stop.pack(side="left", padx=5)
 btn_delete = tk.Button(frame_actions, text="Supprimer les doublons", command=delete_selected)
 btn_delete.pack(side="left", padx=5)
 
-btn_export = tk.Button(frame_actions, text="Exporter rapport", command=lambda: export_report(selected_files))
+btn_export = tk.Button(frame_actions, text="Exporter rapport", command=lambda: export_report(current_duplicates))
 btn_export.pack(side="left", padx=5)
 
 frame_results = ttk.LabelFrame(root, text="Résultats")
